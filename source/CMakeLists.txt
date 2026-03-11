@@ -105,7 +105,15 @@ elseif(NOT ("vcpkg-libsndfile" IN_LIST VCPKG_MANIFEST_FEATURES))
 endif()
 
 # System MIDI support
-if(WIN32)
+if(USE_PORTMIDI)
+	target_compile_definitions(zmusic-obj INTERFACE HAVE_SYSTEM_MIDI USE_PORTMIDI)
+	target_sources(zmusic-obj INTERFACE
+		mididevices/music_portmidi_mididevice.cpp
+	)
+	target_link_libraries(zmusic-obj INTERFACE
+		portmidi
+	)
+elseif(WIN32)
 	target_compile_definitions(zmusic-obj INTERFACE HAVE_SYSTEM_MIDI)
 	target_link_libraries(zmusic-obj INTERFACE winmm)
 	target_sources(zmusic-obj INTERFACE mididevices/music_win_mididevice.cpp)
