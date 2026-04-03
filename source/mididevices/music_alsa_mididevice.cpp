@@ -402,7 +402,7 @@ void AlsaMIDIDevice::PlayerLoop()
 		{
 			if (ExitCond.wait_for(lock, schedule_time) == std::cv_status::no_timeout)
 			{
-				break;
+				continue;
 			}
 		}
 		if (ticks_until_current_ev < 0)
