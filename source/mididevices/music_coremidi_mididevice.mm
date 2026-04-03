@@ -662,7 +662,7 @@ void CoreMIDIDevice::PlayerLoop()
 		{    // Try to keep buffered events under 2x buffer_step
 			if (ExitCond.wait_for(lock, schedule_time) == std::cv_status::no_timeout)
 			{
-				break;
+				continue;
 			}
 		}
 		if (time_until_current_ev < std::chrono::nanoseconds::zero())
