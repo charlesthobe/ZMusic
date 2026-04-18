@@ -38,6 +38,7 @@
 #include <CoreAudio/HostTime.h>
 
 #include <array>
+#include <atomic>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -106,7 +107,7 @@ protected:
 
 	// Threading
 	std::thread PlayerThread;
-	volatile bool Exit;
+	std::atomic<bool> Exit;
 	std::condition_variable ExitCond;
 	std::mutex Mutex;
 
@@ -359,7 +360,7 @@ int CoreMIDIDevice::Resume()
 	{
 		return -1;
 	}
-	Exit = false;
+	Exit.store(false, std::memory_order_relaxed);
 	PlayerThread = std::thread(PlayerThreadProc, this);
 	return 0;
 }
@@ -374,7 +375,7 @@ int CoreMIDIDevice::Resume()
 
 void CoreMIDIDevice::Stop()
 {
-	Exit = true;
+	Exit.store(true, std::memory_order_relaxed);
 	ExitCond.notify_all();
 	if (PlayerThread.joinable())
 	{
@@ -429,7 +430,7 @@ bool CoreMIDIDevice::FakeVolume()
 
 void CoreMIDIDevice::InitPlayback()
 {
-	Exit = false;
+	Exit.store(false, std::memory_order_relaxed);
 }
 
 //==========================================================================
@@ -643,7 +644,7 @@ void CoreMIDIDevice::PlayerLoop()
 	MIDITimeStamp buffer_timestamp = AudioConvertHostTimeToNanos(AudioGetCurrentHostTime());
 
 	// Process all available events and schedule them with CoreMIDI
-	while (!Exit)
+	while (!Exit.load(std::memory_order_relaxed))
 	{
 		if (!PullEvent())
 		{

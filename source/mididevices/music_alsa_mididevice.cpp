@@ -35,6 +35,7 @@
 #if defined __linux__ && defined HAVE_SYSTEM_MIDI
 
 #include <array>
+#include <atomic>
 #include <thread>
 #include <mutex>
 #include <condition_variable>
@@ -97,7 +98,7 @@ protected:
 	int Division = 100; // PPQN
 
 	std::thread PlayerThread;
-	volatile bool Exit;
+	std::atomic<bool> Exit;
 	std::mutex Mutex;
 	std::condition_variable ExitCond;
 };
@@ -382,7 +383,7 @@ void AlsaMIDIDevice::PlayerLoop()
 	snd_seq_queue_status_t* status;
 	snd_seq_queue_status_malloc(&status);
 
-	while (!Exit)
+	while (!Exit.load(std::memory_order_relaxed))
 	{
 		// if we reach the end of events, await our doom at a steady rate while looking for more events
 		if (!PullEvent())
@@ -454,19 +455,19 @@ int AlsaMIDIDevice::Resume()
 	{
 		return 1;
 	}
-	Exit = false;
+	Exit.store(false, std::memory_order_relaxed);
 	PlayerThread = std::thread(&AlsaMIDIDevice::PlayerLoop, this);
 	return 0;
 }
 
 void AlsaMIDIDevice::InitPlayback()
 {
-	Exit = false;
+	Exit.store(false, std::memory_order_relaxed);
 }
 
 void AlsaMIDIDevice::Stop()
 {
-	Exit = true;
+	Exit.store(true, std::memory_order_relaxed);
 	ExitCond.notify_all();
 	if (PlayerThread.joinable())
 	{
