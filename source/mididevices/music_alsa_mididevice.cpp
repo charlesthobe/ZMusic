@@ -62,27 +62,25 @@ public:
 	int StreamOutSync(MidiHeader* data) override;
 	int Resume() override;
 	void Stop() override;
-	bool FakeVolume() override { return true; }; // Not sure if we even can control the volume this way with Alsa, so make it fake.
+	bool FakeVolume() override;
 	bool Pause(bool paused) override;
 	void InitPlayback() override;
-	bool Update() override;
-	bool CanHandleSysex() const override { return true; } // Assume we can, let Alsa sort it out.
 	void PrecacheInstruments(const uint16_t* instruments, int count) override;
 
 protected:
+	bool Precache;
+
 	bool PullEvent();
 	void PlayerLoop();
+
+	// Event handling
 	void HandleEvent(snd_seq_event_t &event, uint tick);
-
-	AlsaSequencer &sequencer;
-	MidiHeader* Events = nullptr;
-	snd_seq_event_t Event;
-	std::array<uint8_t, 3> ShortMsgBuffer;
+	snd_seq_event_t AlsaSeqEvent;
 	snd_midi_event_t* Coder = nullptr;
-	uint32_t Position = 0;
-	uint32_t PositionOffset;
-	uint32_t PulledEventTickDelta;
+	std::array<uint8_t, 3> ShortMsgBuffer;
 
+	// Alsa sequencer handles
+	AlsaSequencer &sequencer;
 	const static int IntendedPortId = 0;
 	bool Connected = false;
 	int PortId = -1;
@@ -91,16 +89,23 @@ protected:
 	int DestinationClientId;
 	int DestinationPortId;
 	int Technology;
-	bool Precache;
 
-	int InitialTempo = 500000;
-	int Tempo;
-	int Division = 100; // PPQN
-
+	// Threading
 	std::thread PlayerThread;
 	std::atomic<bool> Exit;
 	std::mutex Mutex;
 	std::condition_variable ExitCond;
+
+	// Timing
+	int InitialTempo = 500000;
+	int Tempo;
+	int Division = 100; // PPQN
+
+	// ZMusic MidiHeader data
+	MidiHeader* Events = nullptr;
+	uint32_t Position = 0;
+	uint32_t PositionOffset;
+	uint32_t PulledEventTickDelta;
 };
 
 AlsaMIDIDevice::AlsaMIDIDevice(int dev_id, bool precache) : sequencer(AlsaSequencer::Get())
@@ -140,7 +145,7 @@ int AlsaMIDIDevice::Open()
 
 		snd_midi_event_new(3, &Coder); // 3 Bytes for short messages.
 		snd_midi_event_init(Coder);
-		snd_seq_ev_clear(&Event);
+		snd_seq_ev_clear(&AlsaSeqEvent);
 
 		int err = 0;
 		err = snd_seq_create_port(sequencer.handle, pinfo);
@@ -194,6 +199,11 @@ int AlsaMIDIDevice::GetTechnology() const
 	return Technology;
 }
 
+bool AlsaMIDIDevice::FakeVolume()
+{
+	return true; // No true volume control support, so fake volume
+}
+
 int AlsaMIDIDevice::SetTempo(int tempo)
 {
 	InitialTempo = tempo;
@@ -229,29 +239,29 @@ void AlsaMIDIDevice::PrecacheInstruments(const uint16_t* instruments, int count)
 			if (bank[9] != banknum)
 			{
 				ShortMsgBuffer = { MIDI_CTRLCHANGE | 9, 0, banknum };
-				snd_midi_event_encode(Coder, ShortMsgBuffer.data(), 3, &Event);
-				HandleEvent(Event, 0);
+				snd_midi_event_encode(Coder, ShortMsgBuffer.data(), 3, &AlsaSeqEvent);
+				HandleEvent(AlsaSeqEvent, 0);
 				bank[9] = banknum;
 			}
 			ShortMsgBuffer = { MIDI_NOTEON | 9, instr, 1 };
-			snd_midi_event_encode(Coder, ShortMsgBuffer.data(), 3, &Event);
-			HandleEvent(Event, 0);
+			snd_midi_event_encode(Coder, ShortMsgBuffer.data(), 3, &AlsaSeqEvent);
+			HandleEvent(AlsaSeqEvent, 0);
 		}
 		else
 		{ // Melodic
 			if (bank[chan] != banknum)
 			{
 				ShortMsgBuffer = { MIDI_CTRLCHANGE | 9, 0, banknum };
-				snd_midi_event_encode(Coder, ShortMsgBuffer.data(), 3, &Event);
-				HandleEvent(Event, 0);
+				snd_midi_event_encode(Coder, ShortMsgBuffer.data(), 3, &AlsaSeqEvent);
+				HandleEvent(AlsaSeqEvent, 0);
 				bank[chan] = banknum;
 			}
 			ShortMsgBuffer = { (uint8_t)(MIDI_PRGMCHANGE | chan), (uint8_t)instruments[i] };
-			snd_midi_event_encode(Coder, ShortMsgBuffer.data(), 2, &Event);
-			HandleEvent(Event, 0);
+			snd_midi_event_encode(Coder, ShortMsgBuffer.data(), 2, &AlsaSeqEvent);
+			HandleEvent(AlsaSeqEvent, 0);
 			ShortMsgBuffer = { (uint8_t)(MIDI_NOTEON | chan), 60, 1 };
-			snd_midi_event_encode(Coder, ShortMsgBuffer.data(), 3, &Event);
-			HandleEvent(Event, 0);
+			snd_midi_event_encode(Coder, ShortMsgBuffer.data(), 3, &AlsaSeqEvent);
+			HandleEvent(AlsaSeqEvent, 0);
 			if (++chan == 9)
 			{ // Skip the percussion channel
 				chan = 10;
@@ -267,8 +277,8 @@ void AlsaMIDIDevice::PrecacheInstruments(const uint16_t* instruments, int count)
 			{
 				// Turn all notes off
 				ShortMsgBuffer = { (uint8_t)(MIDI_CTRLCHANGE | chan), 123, 0 };
-				snd_midi_event_encode(Coder, ShortMsgBuffer.data(), 3, &Event);
-				HandleEvent(Event, 0);
+				snd_midi_event_encode(Coder, ShortMsgBuffer.data(), 3, &AlsaSeqEvent);
+				HandleEvent(AlsaSeqEvent, 0);
 			}
 			// And now chan is back at 0, ready to start the cycle over.
 		}
@@ -279,10 +289,53 @@ void AlsaMIDIDevice::PrecacheInstruments(const uint16_t* instruments, int count)
 		if (bank[i] != 0)
 		{
 			ShortMsgBuffer = { MIDI_CTRLCHANGE | 9, 0, 0 };
-			snd_midi_event_encode(Coder, ShortMsgBuffer.data(), 3, &Event);
-			HandleEvent(Event, 0);
+			snd_midi_event_encode(Coder, ShortMsgBuffer.data(), 3, &AlsaSeqEvent);
+			HandleEvent(AlsaSeqEvent, 0);
 		}
 	}
+}
+
+void AlsaMIDIDevice::InitPlayback()
+{
+	Exit.store(false, std::memory_order_relaxed);
+}
+
+int AlsaMIDIDevice::Resume()
+{
+	if (!Connected || PlayerThread.joinable())
+	{
+		return 1;
+	}
+	Exit.store(false, std::memory_order_relaxed);
+	PlayerThread = std::thread(&AlsaMIDIDevice::PlayerLoop, this);
+	return 0;
+}
+
+void AlsaMIDIDevice::Stop()
+{
+	Exit.store(true, std::memory_order_relaxed);
+	ExitCond.notify_all();
+	if (PlayerThread.joinable())
+	{
+		PlayerThread.join();
+	}
+	snd_seq_drop_output(sequencer.handle); // This drops events in the sequencer, the sequencer is still usable
+
+	// Reset all channels to prevent hanging notes
+	for (int channel = 0; channel < 16; ++channel)
+	{
+		snd_seq_ev_set_controller(&AlsaSeqEvent, channel, MIDI_CTL_ALL_NOTES_OFF, 0);
+		HandleEvent(AlsaSeqEvent, 0);
+		snd_seq_ev_set_controller(&AlsaSeqEvent, channel, MIDI_CTL_RESET_CONTROLLERS, 0);
+		HandleEvent(AlsaSeqEvent, 0);
+	}
+	snd_seq_sync_output_queue(sequencer.handle);
+}
+
+
+bool AlsaMIDIDevice::Pause(bool paused)
+{
+	return false; // Pausing is not supported
 }
 
 bool AlsaMIDIDevice::PullEvent()
@@ -302,8 +355,8 @@ bool AlsaMIDIDevice::PullEvent()
 		Events = Events->lpNext;
 		Position = 0;
 		if (Callback)
-		{	// This ensures that we always have 2 unused buffers after 1 is used up.
-			// omit this nested "if" block if you want to use up the 2 buffers before requesting new buffers
+		{	// This ensures that we always have the maximum number of unused buffers (most likely 2) after 1 is used up.
+			// omit this nested "if" block if you want to use up all buffers before requesting new buffers
 			Callback(CallbackData);
 		}
 	}
@@ -330,7 +383,7 @@ bool AlsaMIDIDevice::PullEvent()
 	switch (MEVENT_EVENTTYPE(event[2]))
 	{
 	case MEVENT_TEMPO:
-		snd_seq_ev_set_queue_tempo(&Event, QueueId, MEVENT_EVENTPARM(event[2]));
+		snd_seq_ev_set_queue_tempo(&AlsaSeqEvent, QueueId, MEVENT_EVENTPARM(event[2]));
 		break;
 	case MEVENT_LONGMSG: // SysEx message...
 	{
@@ -339,7 +392,7 @@ bool AlsaMIDIDevice::PullEvent()
 		// Ensure valid sysex message
 		if (long_msg_len > 2 && long_msg_data[0] == 0xF0 && long_msg_data[long_msg_len - 1] == 0xF7)
 		{
-			snd_seq_ev_set_sysex(&Event, long_msg_len, (void*)long_msg_data);
+			snd_seq_ev_set_sysex(&AlsaSeqEvent, long_msg_len, (void*)long_msg_data);
 			break;
 		}
 	}
@@ -349,12 +402,36 @@ bool AlsaMIDIDevice::PullEvent()
 							(uint8_t)((event[2] >> 16) & 0xff) }; // Data 2
 
 		// This silently ignores extra bytes, so no message length logic is needed.
-		snd_midi_event_encode(Coder, ShortMsgBuffer.data(), 3, &Event);
+		snd_midi_event_encode(Coder, ShortMsgBuffer.data(), 3, &AlsaSeqEvent);
 		break;
 	default: // We didn't really recognize the event, treat it as a NOP
-		Event.type = SND_SEQ_EVENT_NONE;
+		AlsaSeqEvent.type = SND_SEQ_EVENT_NONE;
 	}
 	return true;
+}
+
+int AlsaMIDIDevice::StreamOut(MidiHeader* header)
+{
+	header->lpNext = nullptr;
+	if (Events == nullptr)
+	{
+		Events = header;
+		Position = 0;
+	}
+	else
+	{
+		MidiHeader** p;
+		for (p = &Events; *p != nullptr; p = &(*p)->lpNext)
+		{ }
+		*p = header;
+	}
+	return 0;
+}
+
+
+int AlsaMIDIDevice::StreamOutSync(MidiHeader* header)
+{
+	return StreamOut(header);
 }
 
 /*
@@ -413,12 +490,12 @@ void AlsaMIDIDevice::PlayerLoop()
 		}
 
 		// We found an event worthy of sending to the sequencer
-		HandleEvent(Event, pulled_event_tick);
+		HandleEvent(AlsaSeqEvent, pulled_event_tick);
 		buffered_ticks = pulled_event_tick;
 		Position += PositionOffset;
 	}
 
-	snd_seq_ev_clear(&Event); // Event is cleared to be used in reset messages in Stop()
+	snd_seq_ev_clear(&AlsaSeqEvent); // AlsaSeqEvent is cleared to be used in reset messages in Stop()
 	snd_seq_queue_status_free(status);
 }
 
@@ -446,80 +523,6 @@ void AlsaMIDIDevice::HandleEvent(snd_seq_event_t &event, uint tick)
 	}
 	snd_seq_drain_output(sequencer.handle);
 	snd_seq_ev_clear(&event);
-}
-
-
-int AlsaMIDIDevice::Resume()
-{
-	if (!Connected || PlayerThread.joinable())
-	{
-		return 1;
-	}
-	Exit.store(false, std::memory_order_relaxed);
-	PlayerThread = std::thread(&AlsaMIDIDevice::PlayerLoop, this);
-	return 0;
-}
-
-void AlsaMIDIDevice::InitPlayback()
-{
-	Exit.store(false, std::memory_order_relaxed);
-}
-
-void AlsaMIDIDevice::Stop()
-{
-	Exit.store(true, std::memory_order_relaxed);
-	ExitCond.notify_all();
-	if (PlayerThread.joinable())
-	{
-		PlayerThread.join();
-	}
-	snd_seq_drop_output(sequencer.handle); // This drops events in the sequencer, the sequencer is still usable
-
-	// Reset all channels to prevent hanging notes
-	for (int channel = 0; channel < 16; ++channel)
-	{
-		snd_seq_ev_set_controller(&Event, channel, MIDI_CTL_ALL_NOTES_OFF, 0);
-		HandleEvent(Event, 0);
-		snd_seq_ev_set_controller(&Event, channel, MIDI_CTL_RESET_CONTROLLERS, 0);
-		HandleEvent(Event, 0);
-	}
-	snd_seq_sync_output_queue(sequencer.handle);
-}
-
-bool AlsaMIDIDevice::Pause(bool paused)
-{
-	// TODO: implement
-	return false;
-}
-
-
-int AlsaMIDIDevice::StreamOut(MidiHeader* header)
-{
-	header->lpNext = nullptr;
-	if (Events == nullptr)
-	{
-		Events = header;
-		Position = 0;
-	}
-	else
-	{
-		MidiHeader** p;
-		for (p = &Events; *p != nullptr; p = &(*p)->lpNext)
-		{ }
-		*p = header;
-	}
-	return 0;
-}
-
-
-int AlsaMIDIDevice::StreamOutSync(MidiHeader* header)
-{
-	return StreamOut(header);
-}
-
-bool AlsaMIDIDevice::Update()
-{
-	return true;
 }
 
 MIDIDevice* CreateAlsaMIDIDevice(int mididevice)
