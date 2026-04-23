@@ -666,7 +666,7 @@ void CoreMIDIDevice::PlayerLoop()
 		if (time_until_pulled_ev < std::chrono::nanoseconds::zero())
 		{	// Can be triggered on playback start.
 			// Message shouldn't be shown by default like other midi backends here.
-			ZMusic_Printf(ZMUSIC_MSG_NOTIFY, "CoreMidi backend underrun by %d nanoseconds!\n", time_until_pulled_ev.count());
+			ZMusic_Printf(ZMUSIC_MSG_DEBUG, "CoreMidi backend underrun by %d nanoseconds!\n", time_until_pulled_ev.count());
 		}
 
 		// Handle PulledEvent

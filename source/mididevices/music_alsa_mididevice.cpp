@@ -408,7 +408,7 @@ void AlsaMIDIDevice::PlayerLoop()
 		if (ticks_until_pulled_ev < 0)
 		{	// Can be triggered on playback start.
 			// Message shouldn't be shown by default like other midi backends here.
-			ZMusic_Printf(ZMUSIC_MSG_NOTIFY, "Alsa sequencer underrun: %d ticks!\n", ticks_until_pulled_ev);
+			ZMusic_Printf(ZMUSIC_MSG_DEBUG, "Alsa sequencer underrun: %d ticks!\n", ticks_until_pulled_ev);
 		}
 
 		// We found an event worthy of sending to the sequencer
