@@ -342,7 +342,7 @@ bool AlsaMIDIDevice::PullEvent()
 			break;
 		}
 	}
-	case 0: // Short MIDI event
+	case MEVENT_SHORTMSG:
 		ShortMsgBuffer = {	(uint8_t)(event[2] & 0xff), // Status
 							(uint8_t)((event[2] >> 8) & 0xff), // Data 1
 							(uint8_t)((event[2] >> 16) & 0xff) }; // Data 2
